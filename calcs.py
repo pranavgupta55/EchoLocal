@@ -297,3 +297,11 @@ def rectRotation(center, w, h, a=0):
 def ellipsePointCollision(pos, ellipseCenter, ellipseHeightRad, ellipseWidthRad):
     return (((ellipseCenter[0] - pos[0]) ** 2) / (ellipseHeightRad ** 2) + ((ellipseCenter[1] - pos[1]) ** 2) / (
                 ellipseWidthRad ** 2)) <= 1
+
+def get_sorted_colors(c1, c2):
+    """Sorts two RGB colors based on saturation. Returns (bg_color, fg_base_color)"""
+    hsv1 = colorsys.rgb_to_hsv(c1[0] / 255, c1[1] / 255, c1[2] / 255)
+    hsv2 = colorsys.rgb_to_hsv(c2[0] / 255, c2[1] / 255, c2[2] / 255)
+    if hsv1[1] < hsv2[1]:
+        return c1, c2
+    return c2, c1
