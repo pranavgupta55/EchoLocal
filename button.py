@@ -1,15 +1,16 @@
 import pygame
-from text import draw_text
+from text import drawText
 
 
-class button:
-    def __init__(self, x, y, w, h, r, text, font, col, border_col, text_col, text_shadow_col):
+class Button:
+    def __init__(self, x, y, w, h, r, text, font, col, border_col, text_col, text_shadow_col=None):
+        # x and y represent the center of the button
         self.x = x
         self.y = y
         self.w = w
         self.h = h
-        self.rect = pygame.rect.Rect(self.x - self.w / 2, self.y - self.h / 2, self.w, self.h)
-        self.text = text
+        self.rect = pygame.Rect(self.x - self.w / 2, self.y - self.h / 2, self.w, self.h)
+        self.text = str(text)
         self.font = font
         self.roundness = r
         self.col = col
@@ -17,63 +18,81 @@ class button:
         self.text_col = text_col
         self.text_shadow_col = text_shadow_col
 
-    def draw(self, s, mouse_x, mouse_y, c):
-        if c and self.rect.collidepoint((mouse_x, mouse_y)):
-            pygame.draw.rect(s, self.col,
-                             (self.rect.x, self.rect.y + self.rect.height / 10, self.rect.width, self.rect.height), 0,
-                             self.roundness)
-            pygame.draw.rect(s, self.border_col,
-                             (self.rect.x, self.rect.y + self.rect.height / 10, self.rect.width, self.rect.height), 2,
-                             self.roundness)
-            draw_text(s, self.text_col, self.text_shadow_col, self.font, self.rect.centerx,
-                      self.rect.centery + self.rect.height / 10, True, str(self.text), 2, True, self.w)
-        else:
-            pygame.draw.rect(s, self.col, self.rect, 0, self.roundness)
-            pygame.draw.rect(s, self.border_col, self.rect, 2, self.roundness)
-            draw_text(s, self.text_col, self.text_shadow_col, self.font, self.rect.centerx, self.rect.centery, True,
-                      str(self.text), 2, True, self.w)
+    def draw(self, surface, mouse_x, mouse_y, clicked):
+        is_hovered = self.rect.collidepoint((mouse_x, mouse_y))
 
-    def update(self, mouse_x, mouse_y, c):
-        if c:
-            if self.rect.collidepoint((mouse_x, mouse_y)):
-                return True
+        # Physical push down effect
+        y_offset = self.rect.height / 10 if (is_hovered and clicked) else 0
+
+        # Calculate visual rect for this frame
+        current_rect = pygame.Rect(self.rect.x, self.rect.y + y_offset, self.rect.width, self.rect.height)
+
+        # Draw Background
+        pygame.draw.rect(surface, self.col, current_rect, 0, self.roundness)
+
+        # Draw Border
+        if self.border_col:
+            pygame.draw.rect(surface, self.border_col, current_rect, 2, self.roundness)
+
+        # Draw Text (Centered Vertically and Horizontally, with optional Wrap and Shadow)
+        drawText(surface, self.text_col, self.font, current_rect.centerx, current_rect.centery,
+                 self.text, color2=self.text_shadow_col, shadowSize=2 if self.text_shadow_col else 0,
+                 wrap=True, maxLen=self.w - 10, justify="center", centeredVertically=True)
+
+    def update(self, mouse_x, mouse_y, clicked):
+        """Returns True if the button is successfully clicked."""
+        if clicked and self.rect.collidepoint((mouse_x, mouse_y)):
+            return True
+        return False
 
 
-def create_buttons(num_hor, num_ver, space_hor, space_ver, width, height, text, clicked, coord):
-    timer = []
+def create_buttons(num_hor, num_ver, space_hor, space_ver, width, height, text_list, coord):
+    """Refactored helper for generating a grid of buttons."""
     buttons_list = []
-    text_list = []
-    color_list = []
+    texts = []
+    clicked = []
+    timers = []
+
     for i in range(num_hor):
-        for o in range(num_ver):
-            buttons_list.append(
-                pygame.Rect(coord[0] + (width + space_hor) * i, coord[1] + (height + space_ver) * o, width, height))
+        for j in range(num_ver):
+            # coord represents the top-left of the grid
+            x = coord[0] + (width + space_hor) * i
+            y = coord[1] + (height + space_ver) * j
+            buttons_list.append(pygame.Rect(x, y, width, height))
+
+            # Safe index handling for texts
+            idx = i * num_ver + j
+            texts.append(text_list[idx] if idx < len(text_list) else "")
             clicked.append(False)
-    for i in range(num_hor * num_ver):
-        text_list.append(text[i])
-    for i in range(num_hor * num_ver):
-        timer.append(0)
-    return [buttons_list, text_list, clicked, color_list, timer]
+            timers.append(0)
+
+    return buttons_list, texts, clicked, timers
 
 
-def draw_buttons(button_rect_list, button_text_list, button_clicked_list, color_list, timer_list, screen, border_width,
-                 corner_radius, font, c, mX, mY):
-    for i, b in enumerate(button_rect_list):
+def draw_buttons(button_rect_list, button_text_list, button_clicked_list, color_list, timer_list,
+                 screen, border_width, corner_radius, font, c, mX, mY):
+    """Refactored grid drawer if needed elsewhere in your code."""
+    for i, rect in enumerate(button_rect_list):
         button_text = button_text_list[i]
+
+        # Color unpacking: [base, text, hover, active]
         button_color = color_list[0]
         text_color = color_list[1]
-        text_length, text_height = pygame.font.Font.size(font, button_text)
-        text_pos = button_rect_list[i].x + button_rect_list[i].width / 2 - text_length / 2, button_rect_list[i].y + \
-                   button_rect_list[i].height / 2 - text_height / 2
-        if pygame.Rect.collidepoint(button_rect_list[i], (mX, mY)):
-            button_color = color_list[2]
+
+        is_hovered = rect.collidepoint((mX, mY))
+
+        if is_hovered:
+            button_color = color_list[2] if len(color_list) > 2 else button_color
             if c:
                 button_clicked_list[i] = True
                 timer_list[i] = 10
         else:
             button_clicked_list[i] = False
+
         if timer_list[i] > 0:
-            button_color = color_list[3]
+            button_color = color_list[3] if len(color_list) > 3 else button_color
             timer_list[i] -= 1
-        pygame.draw.rect(screen, button_color, button_rect_list[i], border_width, corner_radius)
-        screen.blit(font.render(button_text, True, text_color), text_pos)
+
+        pygame.draw.rect(screen, button_color, rect, border_width, corner_radius)
+        drawText(screen, text_color, font, rect.centerx, rect.centery, button_text,
+                 justify="center", centeredVertically=True)
