@@ -1,26 +1,47 @@
 import random
 import math
 import pygame
-from calcs import rectRotation
+import colorsys
+from calcs import rectRotation, brightness, shift_hue
+
+
+def get_sorted_colors(c1, c2):
+    """Sorts two RGB colors based on saturation. Returns (bg_color, fg_base_color)"""
+    hsv1 = colorsys.rgb_to_hsv(c1[0] / 255, c1[1] / 255, c1[2] / 255)
+    hsv2 = colorsys.rgb_to_hsv(c2[0] / 255, c2[1] / 255, c2[2] / 255)
+    if hsv1[1] < hsv2[1]:
+        return c1, c2
+    return c2, c1
 
 
 class Background:
-    def __init__(self, screen, screenWidth, screenHeight, lineColor1, lineColor2, squareColor1, squareColor2,
-                 scaleDownFactor=5, numSquares=20, squareSizeRange=(3, 6), squareBorderWidth=(4, 14),
-                 squareSpeedRange=(-0.2, -0.1), squareRotSpeed=0.01, numLines=10, lineSpeed=0.2,
-                 lineThicknessRange=(10, 12), numLineScreensStored=10):
+    def __init__(self, screen, screenWidth, screenHeight, colorPair,
+                 scaleDownFactor=2, numSquares=30, squareSizeRange=(6, 12), squareBorderWidth=(8, 18),
+                 squareSpeedRange=(-4.5, -3.2), squareRotSpeed=0.20, numLines=10, lineSpeed=0.2,
+                 lineThicknessRange=(20, 45), numLineScreensStored=5):
+
         self.homeScreen = screen
-        self.scaleDownFactor = scaleDownFactor
-        self.screen = pygame.Surface((screenWidth / scaleDownFactor, screenHeight / scaleDownFactor)).convert_alpha()
-        self.numLineScreensStored = numLineScreensStored
-        self.lineSpeed = lineSpeed * self.numLineScreensStored
-        self.linesYOffset = 0
-        self.linesScreen = pygame.Surface((screenWidth / scaleDownFactor,
-                                           self.numLineScreensStored * screenHeight / scaleDownFactor + 3 * max(
-                                               lineThicknessRange))).convert_alpha()
-        self.screenWidth = screenWidth / scaleDownFactor
-        self.screenHeight = screenHeight / scaleDownFactor
-        self.lineThicknessRange = lineThicknessRange
+        self.scaleDownFactor = int(scaleDownFactor)
+
+        # Color processing: bg is less saturated, foreground is more saturated
+        base_bg, fgColor = get_sorted_colors(colorPair[0], colorPair[1])
+        self.bgColor = brightness(base_bg, 0.35)
+
+        lineColor1 = brightness(fgColor, 0.8)
+        lineColor2 = shift_hue(fgColor, 0.05)
+        squareColor1 = brightness(fgColor, 1.1)
+        squareColor2 = shift_hue(fgColor, -0.05)
+
+        self.screenWidth = int(screenWidth / scaleDownFactor)
+        self.screenHeight = int(screenHeight / scaleDownFactor)
+
+        # We process speed scaling identically to the user's preferred previous speed
+        # lineSpeed of 1.5 mapping to roughly 750 pixels/sec
+        self.lineSpeed = -float(abs(lineSpeed) * 500)
+
+        self.screen = pygame.Surface((self.screenWidth, self.screenHeight)).convert_alpha()
+
+        # Generate Squares
         self.squares = []
         for _ in range(numSquares):
             size = random.randint(*squareSizeRange) ** 2
@@ -30,39 +51,73 @@ class Background:
             self.squares.append(
                 BackgroundSquare(self.screenWidth, self.screenHeight, size, borderWidth, squareColor1, squareColor2,
                                  speed, rotSpeed))
-        self.lines = []
+
+        # --- SEAMLESS LINE SCROLLING SETUP ---
         yOffset = 200
-        spacing = (self.screenHeight + yOffset) / numLines
-        for i in range(numLines * self.numLineScreensStored):
-            initY = i * spacing
-            thickness = random.randint(*lineThicknessRange)
+        self.spacing = (self.screenHeight + yOffset) / numLines
+
+        self.lines_per_screen = numLines
+        # A unique pattern consisting of the first 2 screens worth of lines
+        self.pattern_length = 2 * self.lines_per_screen
+        pattern_thicknesses = [random.randint(*lineThicknessRange) for _ in range(self.pattern_length)]
+
+        # We generate exactly 5 screens worth of lines vertically stacked
+        total_screens = 5
+        self.total_lines = total_screens * self.lines_per_screen
+
+        self.lines = []
+        for i in range(self.total_lines):
+            initY = i * self.spacing
+            # Modulo applies the duplicated thickness pattern exactly
+            thickness = pattern_thicknesses[i % self.pattern_length]
             self.lines.append(
                 BackgroundLine(self.screenWidth, self.screenHeight, initY - yOffset, thickness, lineColor1, lineColor2,
-                               yOffset, scaleDownFactor))
+                               yOffset, scaleDownFactor)
+            )
 
+        # Allocate base surface height to fit all 5 screens
+        surface_height = int(self.total_lines * self.spacing + yOffset + max(lineThicknessRange))
+        self.linesScreen = pygame.Surface((self.screenWidth, surface_height)).convert_alpha()
         self.linesScreen.fill((0, 0, 0, 0))
         for line in self.lines:
             line.draw(self.linesScreen)
+
+        # Upscale the massive 5-screen surface once
         self.scaledSurfaceLines = pygame.transform.scale(self.linesScreen,
                                                          (int(self.screenWidth * self.scaleDownFactor),
-                                                          int(self.numLineScreensStored * self.screenHeight * self.scaleDownFactor + 3 * max(
-                                                              self.lineThicknessRange))))
+                                                          int(surface_height * self.scaleDownFactor)))
+
+        # Calculate exact pixel threshold for a mathematically perfect 4-screen loop jump
+        self.looping_distance_downscaled = 4 * self.lines_per_screen * self.spacing
+        self.looping_distance_upscaled = self.looping_distance_downscaled * self.scaleDownFactor
+        self.exact_y_offset = 0.0
 
     def update(self, deltaT):
         for square in self.squares:
             square.update(deltaT)
-        self.linesYOffset += self.lineSpeed * deltaT
-        if self.linesYOffset > 0:
-            self.linesYOffset = -self.linesScreen.get_height()
+
+        # Scroll upwards (offset moves into negative bounds)
+        self.exact_y_offset += self.lineSpeed * deltaT
+
+        # When we scroll up by exactly 4 screens, reset to 0.
+        # Because Screen 5 visually matches Screen 1, this jump is completely invisible.
+        self.exact_y_offset = -(abs(self.exact_y_offset) % self.looping_distance_upscaled)
 
     def draw(self):
+        # 1. Background Fill
+        self.homeScreen.fill(self.bgColor)
+
+        # 2. Draw 5-Screen Seamless Loop Surface
+        pixel_perfect_offset = int(self.exact_y_offset)
+        self.homeScreen.blit(self.scaledSurfaceLines, (0, pixel_perfect_offset))
+
+        # 3. Draw Squares
         self.screen.fill((0, 0, 0, 0))
         for square in self.squares:
             square.draw(self.screen)
         scaledSurface = pygame.transform.scale(self.screen, (int(self.screenWidth * self.scaleDownFactor),
                                                              int(self.screenHeight * self.scaleDownFactor)))
         self.homeScreen.blit(scaledSurface, (0, 0))
-        self.homeScreen.blit(self.scaledSurfaceLines, (0, -3 * max(self.lineThicknessRange) + self.linesYOffset))
 
 
 class BackgroundSquare:
@@ -104,19 +159,18 @@ class BackgroundLine:
         self.screenWidth = screenWidth
         self.screenHeight = screenHeight
         self.y = initY
-        self.thickness = thickness  # Now used as the polygon height.
+        self.thickness = thickness
         self.color1 = color1
         self.color2 = color2
         self.yOffset = yOffset
         self.scaleDownFactor = scaleDownFactor
 
     def draw(self, surface):
-        # Define the top edge using an offset for extra width.
         extraOffset = 3 * self.thickness
         topLeft = (-extraOffset, self.y)
         topRight = (self.screenWidth + extraOffset, self.y + self.yOffset)
-        # Bottom edge is the top edge shifted down vertically by 'height' (here, self.thickness).
         bottomRight = (topRight[0], topRight[1] + self.thickness)
         bottomLeft = (topLeft[0], topLeft[1] + self.thickness)
+
         pygame.draw.polygon(surface, self.color1, [topLeft, topRight, bottomRight, bottomLeft])
         pygame.draw.polygon(surface, self.color2, [topLeft, topRight, bottomRight, bottomLeft], 1)
